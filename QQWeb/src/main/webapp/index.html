@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <title>QQWeb - 聊天</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+<div class="chat-container">
+    <div class="sidebar">
+        <div class="user-header">
+            <img id="userAvatar" src="" alt="头像">
+            <h3 id="userNickname"></h3>
+            <button id="logoutBtn">退出</button>
+        </div>
+        <div class="friends-list">
+            <h4>联系人</h4>
+            <ul id="friendsList">
+                <!-- 好友列表动态生成 -->
+            </ul>
+        </div>
+    </div>
+
+    <div class="chat-main">
+        <div class="chat-header">
+            <h3 id="chattingWith">选择联系人开始聊天</h3>
+        </div>
+
+        <div class="chat-messages" id="chatBox">
+            <!-- 聊天消息动态显示 -->
+        </div>
+
+        <div class="chat-input">
+            <textarea id="messageInput" placeholder="输入消息..."></textarea>
+            <div class="input-actions">
+                <button id="sendBtn">发送</button>
+                <button id="emojiBtn">表情</button>
+                <input type="file" id="imageUpload" accept="image/*" style="display:none">
+                <button id="imageBtn">图片</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+    // 初始化用户信息
+    const user = JSON.parse(localStorage.getItem('user'));
+    if (!user) {
+        window.location.href = 'login.html';
+    }
+
+    document.getElementById('userAvatar').src = user.avatarUrl || '/static/images/default_avatar.png';
+    document.getElementById('userNickname').textContent = user.nickname || user.username;
+
+    // WebSocket连接
+    let socket = null;
+    let currentFriend = null;
+
+    // 初始化WebSocket
+    function initWebSocket() {
+        socket = new WebSocket(`ws://${window.location.host}/chat`);
+
+        socket.onopen = () => {
+            console.log('WebSocket连接已建立');
+            // 发送用户ID给服务器（实际应在握手阶段处理）
+            socket.send(JSON.stringify({
+                type: 'auth',
+                userId: user.userId
+            }));
+            loadFriends(); // 加载好友列表
+        };
+
+        socket.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            displayMessage(message, false);
+        };
+
+        socket.onclose = () => {
+            console.log('WebSocket连接已关闭');
+        };
+    }
+
+    // 显示消息
+    function displayMessage(message, isSelf) {
+        const chatBox = document.getElementById('chatBox');
+        const messageDiv = document.createElement('div');
+        messageDiv.className = isSelf ? 'message self' : 'message other';
+
+        if (message.contentType === 0) { // 文本
+            messageDiv.innerHTML = `<p>${message.content}</p>`;
+        } else if (message.contentType === 1) { // 表情
+            messageDiv.innerHTML = `<img src="/static/emoticons/${message.content}.png" alt="表情">`;
+        } else if (message.contentType === 2) { // 图片
+            messageDiv.innerHTML = `<img src="${message.content}" alt="图片" class="chat-image">`;
+        }
+
+        chatBox.appendChild(messageDiv);
+        chatBox.scrollTop = chatBox.scrollHeight; // 滚动到底部
+    }
+
+    // 加载好友列表
+    function loadFriends() {
+        const friendsList = document.getElementById('friendsList');
+        friendsList.innerHTML = '';
+
+        fetch('/api/friends')
+            .then(response => response.json())
+            .then(friends => {
+                friends.forEach(friend => {
+                    const li = document.createElement('li');
+                    li.className = `friend ${friend.friendOnlineStatus ? 'online' : 'offline'}`;
+                    li.innerHTML = `
+                    <img src="${friend.friendAvatarUrl || '/static/images/default_avatar.png'}" alt="${friend.friendNickname}">
+                    <span>${friend.friendNickname}</span>
+                `;
+
+                    li.addEventListener('click', () => {
+                        currentFriend = friend;
+                        document.getElementById('chattingWith').textContent = `与 ${friend.friendNickname} 聊天中`;
+                        loadChatHistory(friend.friendUserId);
+                    });
+
+                    friendsList.appendChild(li);
+                });
+            });
+    }
+
+    // 加载聊天历史
+    function loadChatHistory(friendId) {
+        const chatBox = document.getElementById('chatBox');
+        chatBox.innerHTML = '';
+
+        fetch(`/api/history?friendId=${friendId}`)
+            .then(response => response.json())
+            .then(messages => {
+                messages.forEach(msg => {
+                    displayMessage(msg, msg.senderId === user.userId);
+                });
+            });
+    }
+
+    // 发送消息
+    function sendMessage() {
+        const input = document.getElementById('messageInput');
+        const content = input.value.trim();
+
+        if (content && currentFriend) {
+            const message = {
+                type: 0, // 文本
+                receiverId: currentFriend.userId,
+                content: content
+            };
+
+            // 通过WebSocket发送
+            socket.send(JSON.stringify(message));
+
+            // 本地显示
+            displayMessage({
+                ...message,
+                senderId: user.userId,
+                sendTime: new Date().toISOString()
+            }, true);
+
+            input.value = '';
+        }
+    }
+
+    // 初始化
+    document.addEventListener('DOMContentLoaded', function() {
+        initWebSocket();
+
+        // 事件绑定
+        document.getElementById('sendBtn').addEventListener('click', sendMessage);
+        document.getElementById('logoutBtn').addEventListener('click', () => {
+            localStorage.removeItem('user');
+            window.location.href = 'login.html';
+        });
+
+        document.getElementById('imageBtn').addEventListener('click', () => {
+            document.getElementById('imageUpload').click();
+        });
+
+        document.getElementById('imageUpload').addEventListener('change', function(e) {
+            if (this.files && this.files[0]) {
+                const formData = new FormData();
+                formData.append('file', this.files[0]);
+
+                fetch('/api/upload', {
+                    method: 'POST',
+                    body: formData
+                })
+                    .then(response => response.text())
+                    .then(imageUrl => {
+                        if (currentFriend) {
+                            const message = {
+                                type: 2, // 图片
+                                receiverId: currentFriend.userId,
+                                content: imageUrl
+                            };
+
+                            socket.send(JSON.stringify(message));
+                            displayMessage({
+                                ...message,
+                                senderId: user.userId,
+                                sendTime: new Date().toISOString()
+                            }, true);
+                        }
+                    });
+            }
+        });
+    });
+</script>
+</body>
+</html>

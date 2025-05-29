@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="qqweb.dao.MessageDao">
+    <resultMap id="messageMap" type="qqweb.entity.Message">
+        <id property="msgId" column="msg_id"/>
+        <result property="senderId" column="sender_id"/>
+        <result property="receiverId" column="receiver_id"/>
+        <result property="contentType" column="content_type"/>
+        <result property="content" column="content"/>
+        <result property="sendTime" column="send_time"/>
+        <result property="isRead" column="is_read"/>
+    </resultMap>
+
+    <insert id="save" useGeneratedKeys="true" keyProperty="msgId">
+        INSERT INTO messages(sender_id, receiver_id, content_type, content, send_time, is_read)
+        VALUES(#{senderId}, #{receiverId}, #{contentType}, #{content}, #{sendTime}, #{isRead})
+    </insert>
+
+    <select id="findByUsers" resultMap="messageMap">
+        SELECT * FROM messages
+        WHERE (sender_id = #{userId1} AND receiver_id = #{userId2})
+           OR (sender_id = #{userId2} AND receiver_id = #{userId1})
+        ORDER BY send_time ASC
+    </select>
+
+    <select id="findUnreadMessages" resultMap="messageMap">
+        SELECT * FROM messages
+        WHERE receiver_id = #{receiverId} AND is_read = 0
+    </select>
+
+    <update id="markMessageAsRead">
+        UPDATE messages SET is_read = 1 WHERE msg_id = #{msgId}
+    </update>
+</mapper>
